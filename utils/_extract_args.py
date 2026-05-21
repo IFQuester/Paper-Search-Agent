@@ -219,6 +219,7 @@ def _extract_args_from_messages(messages: Sequence[BaseMessage]) -> ExtractArgsR
     Returns:
         dict: 参数字典，格式为：{"topic": "xxx", "start_year": xxxx, "end_year": xxxx, "conferences": ["A", "B", ...]}
     """
+<<<<<<< HEAD
     # 一次调用只负责“抽取 + 归一化”，不做外部流程控制。
     # 对 Agent 链路兜底：即使某个抽取环节异常，也返回稳定四键结构。
     safe_messages = list(messages or []) # 防止 None 输入，且后续可能需要多次遍历消息列表，先转换为列表。
@@ -664,3 +665,8 @@ def _deduplicate(values: List[str]) -> List[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
+=======
+    pass
+    # return {"topic": "Agentic RAG", "start_year": 2023, "end_year": 2026, "conferences": ["ACL", "NAACL", "EMNLP"]}
+
+>>>>>>> ea7e178 (实现了论文搜索模块)
