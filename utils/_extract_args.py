@@ -28,7 +28,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, SecretStr
 
 # ✅️
@@ -124,7 +124,93 @@ class _ExtractedArgs(BaseModel):
     conferences: List[str] = Field(default_factory=list)
 
 # ✅️
-def _extract_args(messages: Sequence[BaseMessage]) -> ExtractArgsResult:
+def _extract_args(source: Any, llm: Any = None) -> Any:
+    """参数抽取入口。
+
+    - `_extract_args(state, llm)`：作为 Agent 的参数抽取 Node 使用，返回 state 增量更新。
+    - `_extract_args(messages)`：保留原有兜底抽取能力，返回参数字典。
+    """
+    if llm is None:
+        return _extract_args_from_messages(source)
+    return _extract_args_from_state(source, llm)
+
+# ✅️
+def _extract_args_from_state(state: Dict[str, Any], llm: Any) -> Dict[str, ExtractArgsResult]:
+    """
+    参数抽取Node
+    直接读取 state 中累计的历史对话，优先用当前 Graph 的 LLM 做结构化抽取；
+    若抽取结果不完整或调用失败，再回退到 utils._extract_args 做兜底。
+    该 Node 只返回对 state["args"] 的增量更新。
+    """
+    class ExtractedArgs(BaseModel):
+        topic: str = Field(default="")
+        start_year: int | None = None
+        end_year: int | None = None
+        conferences: List[str] = Field(default_factory=list)
+
+    # messages = state["messages"] # 直接使用 state 中累计的历史对话，包含用户和智能体的多轮交流，理论上能提供更丰富的上下文信息供 LLM 抽取参数
+
+    # ⚠️⚠️⚠️以下是测试用的固定消息，正式运行时请替换为上面注释掉的代码
+    messages = [
+        HumanMessage(content="我想找知识图谱增强大模型的论文。"),
+        AIMessage(content="可以，请问你关注哪些年份和会议？"),
+        HumanMessage(content="2022 到 2024 年，ACL 和 NAACL。"),
+        AIMessage(content="明白了。你更偏向综述类，还是具体方法类的论文？"),
+        HumanMessage(content="更偏向具体方法类，尤其是把知识图谱和大模型结合起来的。"),
+        AIMessage(content="好的。那我再确认一下，你希望检索英文论文为主，对吗？"),
+        HumanMessage(content="对，英文论文为主。"),
+        AIMessage(content="是否有更具体的关键词要求？这样后面筛选会更准。"),
+        HumanMessage(content="可以重点看 knowledge graph enhanced LLM、knowledge graph augmentation、KG-guided LLM。"),
+        AIMessage(content="了解。除了 ACL 和 NAACL，还需要关注 Findings of ACL 之类的论文吗？"),
+        HumanMessage(content="可以，把 Findings 也算进去。"),
+        AIMessage(content="好的，我最后确认一下：主题是知识图谱增强大模型，时间范围 2022 到 2024，会议主要是 ACL、NAACL 及其 Findings，对吗？"),
+        HumanMessage(content="对，就是这个需求。"),
+    ]
+    args_llm = llm.model_copy().with_structured_output(ExtractedArgs)
+    system_prompt = SystemMessage(
+        content=(
+            "你是参数抽取器。请从历史对话中抽取论文检索参数。"
+            "字段固定为 topic、start_year、end_year、conferences。"
+            "字段缺失时留空，不要臆造。conferences 使用会议简称。"
+        )
+    )
+
+    # 尝试调用 LLM 抽取参数
+    try:
+        result = args_llm.invoke([system_prompt] + messages)
+        if isinstance(result, ExtractedArgs):
+            extracted = result.model_dump() # 将 Pydantic 模型转换为字典
+        elif isinstance(result, dict):
+            extracted = result
+        else:
+            return {"args": _extract_args_from_messages(messages)}
+    except Exception:
+        return {"args": _extract_args_from_messages(messages)}
+
+    # 验证抽取结果的完整性和合理性
+    topic = str(extracted.get("topic", "")).strip()
+    start_year = extracted.get("start_year")
+    end_year = extracted.get("end_year")
+    conferences = [
+        str(item).strip()
+        for item in extracted.get("conferences", [])
+        if str(item).strip()
+    ]
+    # 如果 LLM 抽取结果不完整或不合理，则回退到 utils._extract_args 进行兜底抽取
+    if (topic) and (start_year is not None) and (end_year is not None) and (conferences):
+        return {
+            "args": {
+                "topic": topic,
+                "start_year": int(start_year),
+                "end_year": int(end_year),
+                "conferences": conferences,
+            }
+        }
+
+    return {"args": _extract_args_from_messages(messages)}
+
+# ✅️
+def _extract_args_from_messages(messages: Sequence[BaseMessage]) -> ExtractArgsResult:
     """抽取论文搜索范围的参数
 
     Args:
@@ -157,9 +243,9 @@ def _extract_args(messages: Sequence[BaseMessage]) -> ExtractArgsResult:
             rule_result = {}
 
     try:
-        return _normalize_args(llm_result, rule_result, merged_text)
+        return _normalize_args(llm_result, rule_result, merged_text) # 正常结果
     except Exception:
-        return _default_result(merged_text)
+        return _default_result(merged_text) #  极端异常下的保底结果
 
 # ✅️
 def _needs_rule_fallback(llm_result: Dict[str, Any]) -> bool:
@@ -380,11 +466,7 @@ def _extract_topic(text: str) -> str:
         matched = re.search(pattern, text, flags=re.IGNORECASE) # flags=re.IGNORECASE 使得正则匹配时忽略大小写，这样用户输入的“搜索 NLP 论文”或者“search nlp papers”都能被正确匹配到主题“NLP”；同时，正则模式中的\s*和非贪婪匹配.+?等设计，能够适应用户输入中可能存在的多余空格或其他文本，使得抽取更鲁棒；最后，正则模式中的(?=...)前瞻断言，能够确保我们抽取的主题后面跟着的是合理的上下文（比如年份、会议等），而不是一些无关的文本，从而提高抽取的准确性。
         if matched:
             return _clean_topic(matched.group(1))
-# ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
-# ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
-# ⚠️⚠️⚠️⚠️看到这里了，明天继续加油⚠️⚠️⚠️⚠️⚠️⚠️
-# ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
-# ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
+
     # 回退到最近一句用户描述并剔除明显噪声词
     segments = [seg.strip() for seg in re.split(r"[。！？!\n]", text) if seg.strip()]
     if not segments:

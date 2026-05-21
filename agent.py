@@ -74,72 +74,7 @@ class PaperSearchAgent:
             若抽取结果不完整或调用失败，再回退到 utils._extract_args 做兜底。
             该 Node 只返回对 state["args"] 的增量更新。
             """
-            class ExtractedArgs(BaseModel):
-                topic: str = Field(default="")
-                start_year: int | None = None
-                end_year: int | None = None
-                conferences: List[str] = Field(default_factory=list)
-
-            # messages = state["messages"] # 直接使用 state 中累计的历史对话，包含用户和智能体的多轮交流，理论上能提供更丰富的上下文信息供 LLM 抽取参数
-            
-            # ⚠️⚠️⚠️以下是测试用的固定消息，正式运行时请替换为上面注释掉的代码
-            messages = [
-                HumanMessage(content="我想找知识图谱增强大模型的论文。"),
-                AIMessage(content="可以，请问你关注哪些年份和会议？"),
-                HumanMessage(content="2022 到 2024 年，ACL 和 NAACL。"),
-                AIMessage(content="明白了。你更偏向综述类，还是具体方法类的论文？"),
-                HumanMessage(content="更偏向具体方法类，尤其是把知识图谱和大模型结合起来的。"),
-                AIMessage(content="好的。那我再确认一下，你希望检索英文论文为主，对吗？"),
-                HumanMessage(content="对，英文论文为主。"),
-                AIMessage(content="是否有更具体的关键词要求？这样后面筛选会更准。"),
-                HumanMessage(content="可以重点看 knowledge graph enhanced LLM、knowledge graph augmentation、KG-guided LLM。"),
-                AIMessage(content="了解。除了 ACL 和 NAACL，还需要关注 Findings of ACL 之类的论文吗？"),
-                HumanMessage(content="可以，把 Findings 也算进去。"),
-                AIMessage(content="好的，我最后确认一下：主题是知识图谱增强大模型，时间范围 2022 到 2024，会议主要是 ACL、NAACL 及其 Findings，对吗？"),
-                HumanMessage(content="对，就是这个需求。"),
-            ]
-            args_llm = llm.model_copy().with_structured_output(ExtractedArgs)
-            system_prompt = SystemMessage(
-                content=(
-                    "你是参数抽取器。请从历史对话中抽取论文检索参数。"
-                    "字段固定为 topic、start_year、end_year、conferences。"
-                    "字段缺失时留空，不要臆造。conferences 使用会议简称。"
-                )
-            )
-
-            # 尝试调用 LLM 抽取参数
-            try:
-                result = args_llm.invoke([system_prompt] + messages)
-                if isinstance(result, ExtractedArgs):
-                    extracted = result.model_dump() # 将 Pydantic 模型转换为字典
-                elif isinstance(result, dict):
-                    extracted = result
-                else:
-                    return {"args": _extract_args(messages)}
-            except Exception:
-                return {"args": _extract_args(messages)}
-
-            # 验证抽取结果的完整性和合理性
-            topic = str(extracted.get("topic", "")).strip()
-            start_year = extracted.get("start_year")
-            end_year = extracted.get("end_year")
-            conferences = [
-                str(item).strip()
-                for item in extracted.get("conferences", [])
-                if str(item).strip()
-            ]
-            # 如果 LLM 抽取结果不完整或不合理，则回退到 utils._extract_args 进行兜底抽取
-            if (topic) and (start_year is not None) and (end_year is not None) and (conferences):
-                return {
-                    "args": {
-                        "topic": topic,
-                        "start_year": int(start_year),
-                        "end_year": int(end_year),
-                        "conferences": conferences,
-                    }
-                }
-
-            return {"args": _extract_args(messages)}
+            return _extract_args(state, llm)
         
         def confirm_topic(state: AgentState) -> AgentState:
             """
@@ -185,61 +120,7 @@ class PaperSearchAgent:
             基于论文结果列表下载开放论文 PDF。
             要求返回 set，供 summarize 节点直接判断下载状态。
             """
-            papers = state.get("results") or [] # 获取论文结果列表，如果为空则使用空列表
-            injected_papers = None 
-            # PAPER_AGENT_DOWNLOAD_DEBUG = 1  # 开启调试模式
-            debug_enabled = str(os.getenv("PAPER_AGENT_DOWNLOAD_DEBUG", "")).strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-
-            # 如果没有搜索结果但调试模式开启，则注入一条模拟论文结果，测试下载流程和总结节点的汇报功能
-            if ((not papers) and debug_enabled):
-                injected_papers = [
-                    {
-                        "id": 90001,
-                        "title": "Language Models are Few-Shot Learners",
-                        "year": 2020,
-                        "conference": "DEBUG",
-                        "url": "https://arxiv.org/abs/2005.14165",
-                    }
-                ]
-                papers = injected_papers
-                print(f"[download-node] 调试模式已开启，注入 {len(papers)} 条模拟论文结果")
-
-            # 直接返回空下载结果，测试 summarize 节点在没有下载任何论文时的汇报表现
-            if (not papers):
-                return {"downloaded": set()}
-
-            
-            print(f"[download-node] 正在下载，候选论文数: {len(papers)}")
-
-            try:
-                result = _download(state["save_path"], papers)
-            except Exception as exc:
-                print(f"[download-node] 下载异常: {exc}")
-                return {"downloaded": set()}
-
-            if (isinstance(result, set)):
-                if (injected_papers is not None): # 最后在调试的时候才会触发
-                    return {"results": injected_papers, "downloaded": result}
-                return {"downloaded": result}
-
-            if (result is None):
-                if (injected_papers is not None):
-                    return {"results": injected_papers, "downloaded": set()}
-                return {"downloaded": set()}
-
-            try:
-                normalized_result = set(result)
-            except TypeError:
-                normalized_result = set()
-
-            if (injected_papers is not None): # 调试模式
-                return {"results": injected_papers, "downloaded": normalized_result}
-            return {"downloaded": normalized_result}
+            return _download(state)
         
         def summarize(state: AgentState) -> AgentState:
             """
