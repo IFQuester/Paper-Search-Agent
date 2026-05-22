@@ -13,7 +13,7 @@
 from collections.abc import Iterable, Mapping
 import os
 import re
-from typing import Any
+from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import ParseResult, urlparse, urlunparse
 from urllib.request import Request, urlopen
@@ -31,6 +31,79 @@ _REQUEST_HEADERS = {
 # ✅️
 _INVALID_FILENAME_RE = re.compile(r"[<>:\"/\\|?*\x00-\x1f]") # 一共有 9 个非法字符：<>:"/\|?*，以及 ASCII 0-31 的控制字符，这些都是 Windows 文件系统不允许出现在文件名中的。虽然 Linux 和 macOS 更宽松，但为了兼容性，统一替换掉这些字符。
 _WHITESPACE_RE = re.compile(r"\s+")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 论文解析器注册表（模块 A）
+#
+# 背景：上游 state["results"] 中的 url 是平台介绍页（非 PDF 直链），id 是协作者
+# 自编的顺序号（非真实论文 id）。因此下载前需要先按论文标题查询平台 API，拿到
+# 真实 paper_id 和 PDF 直链。本期仅实现 arxiv 一种解析器；未来扩展只需新增一个
+# _resolve_with_xxx 函数并用 @_register_resolver("xxx") 装饰即可。
+#
+# Resolver 协议：输入 paper dict，成功返回 {"paper_id": str, "pdf_url": str}，
+# 失败返回 None（解析器内部自行打印失败原因）。解析器不负责下载、不写文件、
+# 不触碰 state，保证高内聚低耦合。
+# ─────────────────────────────────────────────────────────────────────────────
+
+Resolver = Callable[[Mapping], Optional[dict]]
+_RESOLVERS: dict[str, Resolver] = {}
+
+def _register_resolver(name: str):
+    """把一个解析器函数注册到全局 _RESOLVERS 表，便于按名字分发。"""
+    def decorator(fn: Resolver) -> Resolver:
+        _RESOLVERS[name] = fn
+        return fn
+    return decorator
+
+@_register_resolver("arxiv")
+def _resolve_with_arxiv(paper: Mapping) -> Optional[dict]:
+    """通过 arxiv API 按论文标题搜索，返回真实 paper_id 与 pdf_url。
+
+    Args:
+        paper: 论文记录字典，至少需要包含可读的 ``title`` 字段。
+
+    Returns:
+        成功：``{"paper_id": "2306.05212v1", "pdf_url": "https://arxiv.org/pdf/2306.05212v1"}``
+        失败（标题为空 / 库未装 / 网络异常 / 未命中）：``None``，并在控制台打印失败原因。
+    """
+    title = str(paper.get("title", "")).strip()
+    if (not title):
+        print("[resolve-arxiv] 标题为空，跳过解析")
+        return None
+
+    # 按需 import：即使运行环境暂时缺 arxiv 库，也不影响整个 _download 模块加载
+    try:
+        import arxiv
+    except ImportError as exc:
+        print(f"[resolve-arxiv] arxiv 库未安装: {exc}")
+        return None
+
+    try:
+        client = arxiv.Client()
+        # ti:"..." 限定在标题字段做精确短语搜索；max_results=1 只取最相关的一条
+        search = arxiv.Search(query=f'ti:"{title}"', max_results=1)
+        hits = list(client.results(search))
+    except Exception as exc:
+        # arxiv 客户端在网络/速率限制/解析异常时会抛各种异常，这里统一兜底
+        print(f"[resolve-arxiv] API 查询失败: title={title!r}, error={exc}")
+        return None
+
+    if (not hits):
+        print(f"[resolve-arxiv] 未找到匹配论文: title={title!r}")
+        return None
+
+    top = hits[0]
+    return {
+        "paper_id": top.get_short_id(),  # 形如 "2306.05212v1"
+        "pdf_url": top.pdf_url,           # 形如 "https://arxiv.org/pdf/2306.05212v1"
+    }
+
+def _resolve_paper(paper: Mapping) -> Optional[dict]:
+    """统一的解析入口；当前固定调度到 arxiv 解析器。
+
+    未来如需多平台路由，可在此处按 ``paper["conference"]`` 等字段选择不同解析器。
+    """
+    return _RESOLVERS["arxiv"](paper)
 
 # ✅️
 def _download(state_or_spath: Any, results: Any = None) -> Any:
@@ -104,6 +177,13 @@ def _download(state_or_spath: Any, results: Any = None) -> Any:
 def _download_files(spath: str, results: Any) -> set[Any]:
     """批量下载论文 PDF，并返回成功下载的论文 id 集合。
 
+    流程：
+      1. 规整输入论文列表。
+      2. 对每条论文先调用 ``_resolve_paper`` 拿到真实 PDF 直链。
+      3. 用现有候选生成 + PDF 下载校验逻辑完成下载。
+      4. 解析失败 / 候选 URL 不可用 / 下载失败的论文，仅在控制台打印失败信息
+         （含批次末尾的失败 id 汇总），不进入返回的 set，也不写入 state。
+
     Args:
         spath (str): 保存目录路径。
         results (Any): 论文列表，格式：
@@ -113,6 +193,7 @@ def _download_files(spath: str, results: Any) -> set[Any]:
         set[Any]: 成功下载的论文 id 集合。
     """
     downloaded_ids: set[Any] = set() # 初始为空集合，存储成功下载的论文 id
+    failed_ids: list = []            # 仅用于批次末尾汇总打印，不返回
     papers = _normalize_results(results)
     if (not papers):
         return downloaded_ids
@@ -128,12 +209,26 @@ def _download_files(spath: str, results: Any) -> set[Any]:
         if (paper_info is None):
             continue
 
-        paper_id, title, paper_url = paper_info # 解包
-        candidate_urls = _build_candidate_urls(paper_url)
+        paper_id, title, _platform_url = paper_info # 原 url 是平台介绍页，不再用于构造下载链
+
+        # 模块 A：解析真实 PDF 直链（当前走 arxiv）
+        resolved = _resolve_paper(paper)
+        if (resolved is None):
+            print(f"[download] 解析失败: id={paper_id}, title={title!r}")
+            failed_ids.append(paper_id)
+            continue
+
+        pdf_url = resolved["pdf_url"]
+        # 复用现有候选生成逻辑：直链 PDF 会原样作为单元素列表返回，未来若解析器
+        # 返回的链接需要变体补丁（如 .pdf 后缀补齐），也能继续在这里收口处理。
+        candidate_urls = _build_candidate_urls(pdf_url)
         if (not candidate_urls):
+            print(f"[download] 解析后 URL 不可用: id={paper_id}, url={pdf_url}")
+            failed_ids.append(paper_id)
             continue
 
         file_stem = _build_file_stem(paper_id, title)
+        success = False
         for candidate_url in candidate_urls:
             pdf_bytes = _fetch_pdf_bytes(candidate_url)
             if (pdf_bytes is None):
@@ -149,8 +244,15 @@ def _download_files(spath: str, results: Any) -> set[Any]:
 
             downloaded_ids.add(paper_id)
             print(f"[download] 下载成功: id={paper_id}, file={target_path}")
+            success = True
             break
 
+        if (not success):
+            print(f"[download] 下载失败: id={paper_id}, title={title!r}")
+            failed_ids.append(paper_id)
+
+    if (failed_ids):
+        print(f"[download] 本批次失败 id 汇总（{len(failed_ids)} 条）: {failed_ids}")
     return downloaded_ids
 
 # ✅️
@@ -416,3 +518,42 @@ def download_with_debug(save_path: str, papers: Any, debug_enabled: bool = False
         normalized_result = set()
 
     return normalized_result, injected_papers
+
+
+# # ─────────────────────────────────────────────────────────────────────────────
+# # 本地手动测试入口
+# #
+# # 用途：直接 `python utils/_download.py` 跑全量测试 JSON，验证"解析+下载"链路
+# # 是否正常。投入正式使用时可注释掉本块，不影响 _download 被 agent.py 调用。
+# # ─────────────────────────────────────────────────────────────────────────────
+# if __name__ == "__main__":
+#     import json
+#     import sys
+
+#     # Windows 上 Python 默认 stdout 走 GBK/cp936，从 Git Bash 等 UTF-8 终端
+#     # 读取会显示成乱码。仅在直跑测试入口时强制改成 UTF-8，不影响被 agent.py 调用的场景。
+#     # 用 getattr 取属性是因为静态类型存根里 sys.stdout 标的是 TextIO（没有 reconfigure），
+#     # 实际运行时是 TextIOWrapper（Python 3.7+ 自带 reconfigure）。
+#     for stream in (sys.stdout, sys.stderr):
+#         reconfigure = getattr(stream, "reconfigure", None)
+#         if callable(reconfigure):
+#             try:
+#                 reconfigure(encoding="utf-8")
+#             except OSError:
+#                 pass
+
+#     here = os.path.dirname(os.path.abspath(__file__))
+#     test_json = os.path.normpath(os.path.join(here, "..", "测试的输入数据.json"))
+#     save_dir = os.path.normpath(os.path.join(here, "..", "save"))
+
+#     with open(test_json, "r", encoding="utf-8") as fr:
+#         all_papers = json.load(fr)
+
+#     state = {"results": all_papers, "save_path": save_dir}
+#     result = _download(state)
+
+#     downloaded = result.get("downloaded", set())
+#     print("=" * 60)
+#     print(f"输入数量: {len(all_papers)}")
+#     print(f"成功下载 {len(downloaded)} 条: {sorted(downloaded)}")
+#     print(f"PDF 保存到: {save_dir}")

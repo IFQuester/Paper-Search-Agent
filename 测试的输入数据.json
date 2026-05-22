@@ -1,0 +1,149 @@
+[
+    {
+        "id": 1,
+        "title": "PA-RAG: RAG Alignment via Multi-Perspective Preference Optimization",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 2,
+        "title": "RAG-Star: Enhancing Deliberative Reasoning with Retrieval Augmented Verification and Refinement",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 3,
+        "title": "MES-RAG: Bringing Multi-modal, Entity-Storage, and Secure Enhancements to RAG",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 4,
+        "title": "Probing-RAG: Self-Probing to Guide Language Models in Selective Document Retrieval",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 5,
+        "title": "SuperRAG: Beyond RAG with Layout-Aware Graph Modeling",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 6,
+        "title": "FunnelRAG: A Coarse-to-Fine Progressive Retrieval Paradigm for RAG",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 7,
+        "title": "Transform Retrieval for Textual Entailment in RAG",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 8,
+        "title": "RAD-Bench: Evaluating Large Language Models\u2019 Capabilities in Retrieval Augmented Dialogues",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 9,
+        "title": "Evaluating the Performance of RAG Methods for Conversational AI in the Airport Domain",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 10,
+        "title": "HyPA-RAG: A Hybrid Parameter Adaptive Retrieval-Augmented Generation System for AI Legal and Policy Applications",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 11,
+        "title": "Do RAG Systems Cover What Matters? Evaluating and Optimizing Responses with Sub-Question Coverage",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 12,
+        "title": "Rationale-Guided Retrieval Augmented Generation for Medical Question Answering",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 13,
+        "title": "RAG LLMs are Not Safer: A Safety Analysis of Retrieval-Augmented Generation for Large Language Models",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 14,
+        "title": "CoRAG: Collaborative Retrieval-Augmented Generation",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 15,
+        "title": "Chain-of-Rank: Enhancing Large Language Models for Domain-Specific RAG in Edge Device",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 16,
+        "title": "RATSD: Retrieval Augmented Truthfulness Stance Detection from Social Media Posts Toward Factual Claims",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 17,
+        "title": "From Generating Answers to Building Explanations: Integrating Multi-Round RAG and Causal Modeling for Scientific QA",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 18,
+        "title": "GRAG: Graph Retrieval-Augmented Generation",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 19,
+        "title": "tRAG: Term-level Retrieval-Augmented Generation for Domain-Adaptive Retrieval",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 20,
+        "title": "DSRAG: A Double-Stream Retrieval-Augmented Generation Framework for Countless Intent Detection",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    },
+    {
+        "id": 21,
+        "title": "CORD: Balancing COnsistency and Rank Distillation for Robust Retrieval-Augmented Generation",
+        "year": 2025,
+        "conference": "ACL",
+        "url": "https://2025.naacl.org/program/accepted_papers/"
+    }
+]
